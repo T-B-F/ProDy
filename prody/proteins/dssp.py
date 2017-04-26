@@ -199,7 +199,8 @@ def performDSSP(pdb, parseall=False, stderr=True):
     """Perform DSSP calculations and parse results.  DSSP data is returned
     in an :class:`~.AtomGroup` instance.  See also :func:`execDSSP`
     and :func:`parseDSSP`."""
-
-    pdb = fetchPDB(pdb, compressed=False)
-    return parseDSSP(execDSSP(pdb, stderr=stderr), parsePDB(pdb), parseall)
-
+    if os.path.isfile(pdb):
+        filename = pdb[:]
+    else:
+        filename = fetchPDB(pdb, compressed=False)
+    return parseDSSP(execDSSP(filename, stderr=stderr), parsePDB(filename), parseall)
