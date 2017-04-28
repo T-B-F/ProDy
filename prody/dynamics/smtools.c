@@ -21,6 +21,7 @@ static PyObject *calcSM(PyObject *self, PyObject *args, PyObject *kwargs)
   double *XYZ, *SM, *lambda, *U, kbt=1.;
   double **stiff_matrix;
   double r_ij, x_ij, y_ij, z_ij, norm_U;
+  double eps_zeros = 1e-6;
   static char *kwlist[] = {"coords", "sm", "eigvecs", "eigvals",
           "natoms","n_modes",
           "kbt",NULL};
@@ -52,25 +53,26 @@ static PyObject *calcSM(PyObject *self, PyObject *args, PyObject *kwargs)
       double sum2=0.0;
       double cos_alpha_ij=0.0;
 
-      for(k=6; k<nmodes; k++){
-      //      u_ij_sup_k[0]=(eigvecs[k][ind_3j  ]-eigvecs[k][ind_3i  ]);
-        u_ij_sup_k[0]=(U[(k)*3*numCA+j*3]-U[(k)*3*numCA+i*3]);
+      for(k=0; k<nmodes; k++){
+          if (lambda[k] > eps_zeros){
+        //      u_ij_sup_k[0]=(eigvecs[k][ind_3j  ]-eigvecs[k][ind_3i  ]);
+            u_ij_sup_k[0]=(U[(k)*3*numCA+j*3]-U[(k)*3*numCA+i*3]);
 
-      //      u_ij_sup_k[1]=(eigvecs[k][ind_3j+1]-eigvecs[k][ind_3i+1]);
-        u_ij_sup_k[1]=(U[(k)*3*numCA+j*3+1]-U[(k)*3*numCA+i*3+1]);
+        //      u_ij_sup_k[1]=(eigvecs[k][ind_3j+1]-eigvecs[k][ind_3i+1]);
+            u_ij_sup_k[1]=(U[(k)*3*numCA+j*3+1]-U[(k)*3*numCA+i*3+1]);
 
-      //      u_ij_sup_k[2]=(eigvecs[k][ind_3j+2]-eigvecs[k][ind_3i+2]);
-        u_ij_sup_k[2]=(U[(k)*3*numCA+j*3+2]-U[(k)*3*numCA+i*3+2]);
+        //      u_ij_sup_k[2]=(eigvecs[k][ind_3j+2]-eigvecs[k][ind_3i+2]);
+            u_ij_sup_k[2]=(U[(k)*3*numCA+j*3+2]-U[(k)*3*numCA+i*3+2]);
 
-        cos_alpha_ij=(  (x_ij*u_ij_sup_k[0]) +\
-          (y_ij*u_ij_sup_k[1]) +\
-          (z_ij*u_ij_sup_k[2])  );
-        d_ij_sup_k=sqrt(kbt/lambda[k])*cos_alpha_ij;
+            cos_alpha_ij=(  (x_ij*u_ij_sup_k[0]) +\
+            (y_ij*u_ij_sup_k[1]) +\
+            (z_ij*u_ij_sup_k[2])  );
+            d_ij_sup_k=sqrt(kbt/lambda[k])*cos_alpha_ij;
 
-      
-        sum1+=fabs(lambda[k]*d_ij_sup_k);
-        sum2+=fabs(d_ij_sup_k);
-       
+        
+            sum1+=fabs(lambda[k]*d_ij_sup_k);
+            sum2+=fabs(d_ij_sup_k);
+          }
       }
       stiff_matrix[i][j]=sum1/sum2;
       stiff_matrix[j][i]=stiff_matrix[i][j];

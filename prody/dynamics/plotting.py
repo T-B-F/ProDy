@@ -759,7 +759,9 @@ def showMechStiff(model, coords, *args, **kwargs):
     import matplotlib
     import matplotlib.pyplot as plt
     arange = np.arange(model.numAtoms())
-    model.buildMechStiff(coords)
+    
+    if model.getStiffness() is None:
+        model.buildMechStiff(coords)
 
     if not 'origin' in kwargs:
         kwargs['origin'] = 'lower'
