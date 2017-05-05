@@ -912,28 +912,31 @@ def calcPairDeformationDist(model, coords, ind1, ind2, kbt=1.):
     n_modes = model.numModes()
     LOGGER.timeit('_pairdef')
 
-    r_ij = np.zeros((n_atoms,n_atoms,3))
-    r_ij_norm = np.zeros((n_atoms,n_atoms,3))
+    ind1 = ind1 - resnum_list[0]
+    ind2 = ind2 - resnum_list[0]
+    r_ij = coords[ind1, :] - coords[ind2, :]
+    r_ij_norm = r_ij / linalg.norm(r_ij)
+    
+    #r_ij = np.zeros((n_atoms,n_atoms,3))
+    #r_ij_norm = np.zeros((n_atoms,n_atoms,3))
 
-    for i in range(n_atoms):
-        for j in range(i+1,n_atoms):
-            r_ij[i][j] = coords[j,:] - coords[i,:]
-            r_ij[j][i] = r_ij[i][j]
-            r_ij_norm[i][j] = r_ij[i][j]/linalg.norm(r_ij[i][j])
-            r_ij_norm[j][i] = r_ij_norm[i][j]
+    #for i in range(n_atoms):
+        #for j in range(i+1,n_atoms):
+            #r_ij[i][j] = coords[j,:] - coords[i,:]
+            #r_ij[j][i] = r_ij[i][j]
+            #r_ij_norm[i][j] = r_ij[i][j]/linalg.norm(r_ij[i][j])
+            #r_ij_norm[j][i] = r_ij_norm[i][j]
 
     eigvecs = model.getEigvecs()
     eigvals = model.getEigvals()
     
     D_pair_k = []
     mode_nr = []
-    ind1 = ind1 - resnum_list[0]
-    ind2 = ind2 - resnum_list[0]
 
     for m in xrange(6,n_modes):
         U_ij_k = [(eigvecs[ind1*3][m] - eigvecs[ind2*3][m]), (eigvecs[ind1*3+1][m] \
             - eigvecs[ind2*3+1][m]), (eigvecs[ind1*3+2][m] - eigvecs[ind2*3+2][m])] 
-        D_ij_k = abs(np.sqrt(kbt/eigvals[m])*(np.vdot(r_ij_norm[ind1][ind2], U_ij_k)))  
+        D_ij_k = abs(np.sqrt(kbt/eigvals[m])*(np.vdot(r_ij_norm, U_ij_k)))
         D_pair_k.append(D_ij_k)
         mode_nr.append(m)
 
