@@ -23,7 +23,7 @@ __all__ = ['calcCollectivity', 'calcCovariance', 'calcCrossCorr',
            'calcFractVariance', 'calcSqFlucts', 'calcTempFactors',
            'calcProjection', 'calcCrossProjection', 
            'calcPerturbResponse', 'parsePerturbResponseMatrix', 
-           'writePerturbResponsePDB', 'calcPerturbResponseProfiles', 
+           'calcPerturbResponseProfiles', 'writePerturbResponsePDB',
            'calcSpecDimension', 'calcPairDeformationDist',]
 
 class PRSMatrixParseError(Exception):
@@ -44,23 +44,33 @@ def calcCollectivity(mode, masses=None):
     :arg masses: atomic masses
     :type masses: :class:`numpy.ndarray`"""
 
-    if not isinstance(mode, Mode):
-        raise TypeError('mode must be a Mode instance')
+    if not isinstance(mode, (Mode, ModeSet)):
+        raise TypeError('mode must be a Mode or ModeSet instance')
+    if isinstance(mode, Mode):
+        mode = [mode]
+    
+    colls = []
 
-    is3d = mode.is3d()
-    if masses is not None:
-        if len(masses) != mode.numAtoms():
-            raise ValueError('length of masses must be equal to number of atoms')
-        if is3d:
-            u2in = (mode.getArrayNx3() ** 2).sum(1) / masses
-    else:
-        if is3d:
-            u2in = (mode.getArrayNx3() ** 2).sum(1)
+    for m in mode:
+        is3d = m.is3d()
+        if masses is not None:
+            if len(masses) != m.numAtoms():
+                raise ValueError('length of masses must be equal to number of atoms')
+            if is3d:
+                u2in = (m.getArrayNx3() ** 2).sum(1) / masses
         else:
-            u2in = (mode.getArrayNx3() ** 2)
-    u2in = u2in * (1 / u2in.sum() ** 0.5)
-    coll = np.exp(-(u2in * np.log(u2in)).sum()) / mode.numAtoms()
-    return coll
+            if is3d:
+                u2in = (m.getArrayNx3() ** 2).sum(1)
+            else:
+                u2in = (m.getArrayNx3() ** 2)
+        u2in = u2in * (1 / u2in.sum() ** 0.5)
+        coll = np.exp(-(u2in * np.log(u2in)).sum()) / m.numAtoms()
+        colls.append(coll)
+    
+    if len(mode) == 1:
+        return coll
+    else:
+        return colls
 
 def calcSpecDimension(mode):
 
@@ -285,7 +295,7 @@ def calcCrossCorr(modes, n_cpu=1):
         else:
             n_modes = len(modes)
             indices = np.arange(n_modes)
-        array = model._array
+        array = model._getArray()
         n_atoms = model._n_atoms
         variances = model._vars
         if n_cpu == 1:
@@ -363,6 +373,7 @@ def calcCovariance(modes):
 
 
 def calcPerturbResponse(model, atoms=None, repeats=100, **kwargs):
+
     """Returns a matrix of profiles from scanning of the response of the
     structure to random perturbations at specific atom (or node) positions.
     The function implements the perturbation response scanning (PRS) method
@@ -375,7 +386,8 @@ def calcPerturbResponse(model, atoms=None, repeats=100, **kwargs):
     instance is given, PRS profile for residues will be added as an attribute
     which then can be retrieved as ``atoms.getData('prs_profile')``.  *model*
     and *atoms* must have the same number of atoms. *atoms* must be an
-    :class:`.AtomGroup` instance.
+    :class:`.AtomGroup` instance. write_output is a Bool variable to write
+    normalized asymmetric PRS matrix to a file. 
 
     .. [CA09] Atilgan C, Atilgan AR, Perturbation-Response Scanning
        Reveals Ligand Entry-Exit Mechanisms of Ferric Binding Protein.
@@ -403,10 +415,10 @@ def calcPerturbResponse(model, atoms=None, repeats=100, **kwargs):
         any set of them.
     :type operation: str or list
 
-    :arg useCovariance: whether to use the covariance matrix directly rather
+    :arg noForce: whether to use the covariance matrix directly rather
         than applying forces. This appears to be equivalent when scanning for
-        response magnitudes and will be much quicker. Default is False for now.
-    :type useCovariance: bool
+        response magnitudes and will be much quicker. Default is True.
+    :type noForce: bool
 
     :arg normMatrix: whether to normalise the single response matrix by
         dividing each row by its diagonal, Default is False, we recommend true
@@ -431,58 +443,105 @@ def calcPerturbResponse(model, atoms=None, repeats=100, **kwargs):
         or 'all'. Default is 'all'; Using other directions requires atoms.
     :type acceptDirection: str
     """
+    noForce = kwargs.get('noForce',True)
+    if not noForce:
+        operation = kwargs.get('operation','mea')
+
+        if operation is not None:
+            if type(operation) is str:
+                if operation == 'all' or operation == 'all operations':
+                    operationList = ['var','mea','max','min','dif']
+                else:
+                    operationList = []
+                    operationList.append(operation.lower()[:3])
+            elif type(operation) is list:
+                operationList = operation
+                for i in range(len(operationList)):
+                    operationList[i] = operationList[i].lower()[:3]
+
+            operationList = np.array(operationList) 
+            found_valid_operation = False
+
+            if 'var' in operationList:
+                found_valid_operation = True
+
+            if 'max' in operationList:
+                found_valid_operation = True
+
+            if 'mea' in operationList:
+                found_valid_operation = True
+
+            if 'min' in operationList:
+                found_valid_operation = True
+
+            if 'dif' in operationList:
+                found_valid_operation = True
+
+            if not found_valid_operation:
+                raise ValueError('Operation should be mean, variance, max, min or ' \
+                                 'or difference (from covariance matrix) in quotes ' \
+                                 'or a list containing a set of these or None.')
 
     if not isinstance(model, NMA):
         raise TypeError('model must be an NMA instance')
-    elif not model.is3d():
-        raise TypeError('model must be a 3-dimensional NMA instance')
+    elif not model.is3d() and not noForce:
+        raise TypeError('model must be a 3-dimensional NMA instance' \
+                        'for using PRS with force')
     elif len(model) == 0:
         raise ValueError('model must have normal modes calculated')
 
     if atoms is not None:
         if isinstance(atoms, Selection):
-            ag_atoms = AtomGroup('atoms from selection')
-            ag_atoms.setCoords(atoms.getCoords())
-            ag_atoms.setResnums(atoms.getResnums())
-            ag_atoms.setChids(atoms.getChids())
-            atoms = ag_atoms
+            atoms = atoms.copy()
         if not isinstance(atoms, AtomGroup):
             raise TypeError('atoms must be an AtomGroup instance')
         elif atoms.numAtoms() != model.numAtoms():
             raise ValueError('model and atoms must have the same number atoms')
+
+    n_atoms = model.numAtoms()
+    LOGGER.timeit('_prody_prs_all')
+    LOGGER.info('Calculating covariance matrix')
+    LOGGER.timeit('_prody_cov')
 
     assert isinstance(repeats, int), 'repeats must be an integer'
     cov = calcCovariance(model)
     if cov is None:
         raise ValueError('model did not return a covariance matrix')
 
-    n_atoms = model.numAtoms()
+    LOGGER.clear()
+    LOGGER.report('Covariance matrix calculated in %.1fs.',
+                  '_prody_cov')
 
-    LOGGER.progress('Calculating perturbation response', n_atoms, '_prody_prs')
+    LOGGER.progress('Calculating perturbation response', n_atoms, '_prody_prs_mat')
+    matrix_dict = {}
 
-    useCovariance = kwargs.get('useCovariance',False)
-    if useCovariance is True:
-        operationList = ['None']
-        cov_squared = cov**2
-        n_by_3n_matrix = np.zeros((n_atoms, 3 * n_atoms))
-        matrix_set = np.zeros((1, n_atoms, n_atoms))
-        i3 = -3
-        i3p3 = 0
-        for i in range(n_atoms):
-            i3 += 3
-            i3p3 += 3
-            n_by_3n_matrix[i,:] = (cov_squared[i3:i3p3,:]).sum(0)
+    if noForce or 'dif' in operationList:
+        if not model.is3d():
+            n_by_n_cov_squared = cov**2
 
-        j3 = -3
-        j3p3 = 0
-        for j in range(n_atoms):
-            j3 += 3
-            j3p3 += 3                
-            matrix_set[0,:,j] = (n_by_3n_matrix[:,j3:j3p3]).sum(1)
- 
+        else:
+            cov_squared = cov**2
+            n_by_3n_cov_squared = np.zeros((n_atoms, 3 * n_atoms))
+            n_by_n_cov_squared = np.zeros((n_atoms, n_atoms))
+            i3 = -3
+            i3p3 = 0
+            for i in range(n_atoms):
+                i3 += 3
+                i3p3 += 3
+                n_by_3n_cov_squared[i,:] = (cov_squared[i3:i3p3,:]).sum(0)
+
+            j3 = -3
+            j3p3 = 0
+            for j in range(n_atoms):
+                j3 += 3
+                j3p3 += 3                
+                n_by_n_cov_squared[:,j] = (n_by_3n_cov_squared[:,j3:j3p3]).sum(1)
+
+    if noForce:
+        matrix_dict['noForce'] = n_by_n_cov_squared
         LOGGER.clear()
-        LOGGER.report('Perturbation response scanning completed in %.1fs.',
-                      '_prody_prs')
+        LOGGER.report('Perturbation response matrix calculated in %.1fs.',
+                      '_prody_prs_mat')
 
     else:
 
@@ -500,14 +559,15 @@ def calcPerturbResponse(model, atoms=None, repeats=100, **kwargs):
                                       np.mean(coords[:,1]), \
                                       np.mean(coords[:,2])])
  
+        mag = kwargs.get('mag',1)
         response_matrix = np.zeros((repeats, n_atoms, n_atoms)) 
         i3 = -3
         i3p3 = 0
         for i in range(n_atoms):
             i3 += 3
             i3p3 += 3
-            forces = np.random.rand(repeats * 3).reshape((repeats, 3))
-            forces /= ((forces**2).sum(1)**0.5).reshape((repeats, 1))
+            forces = np.random.randn(repeats * 3).reshape((repeats, 3))
+            forces /= ((forces**2).sum(1)**0.5).reshape((repeats, 1)) * mag
             for n in range(repeats):
                 force = forces[n]
 
@@ -526,80 +586,33 @@ def calcPerturbResponse(model, atoms=None, repeats=100, **kwargs):
                 response_matrix[n,i,:] = (
                     np.dot(cov[:, i3:i3p3], force)
                     ** 2).reshape((n_atoms, 3)).sum(1)
-            LOGGER.update(i, '_prody_prs')
+            LOGGER.update(i, '_prody_prs_mat')
 
         LOGGER.clear()
-        LOGGER.report('Perturbation response scanning completed in %.1fs.',
-                      '_prody_prs')
+        LOGGER.report('Perturbation response scanning matrix calculated in %.1fs.',
+                      '_prody_prs_mat')
 
-        operation = kwargs.get('operation','mea')
+        LOGGER.progress('Performing matrix combination operations', n_atoms, \
+                        '_prody_prs_ops')
 
-        if operation is not None:
-            if type(operation) is str:
-                if operation == 'all' or operation == 'all operations':
-                    operationList = ['var','mea','max','min','dif']
-                else:
-                    operationList = []
-                    operationList.append(operation.lower()[:3])
-            elif type(operation) is list:
-                operationList = operation
-                for i in range(len(operationList)):
-                    operationList[i] = operationList[i].lower()[:3]
+        if 'var' in operationList:
+            matrix_dict['var'] = np.var(response_matrix,axis=0) 
 
-            operationList = np.array(operationList) 
-            matrix_set = np.zeros((len(operationList),n_atoms,n_atoms))
-            found_valid_operation = False
+        if 'max' in operationList:
+            matrix_dict['max'] = np.amax(response_matrix,axis=0)
 
-            if 'var' in operationList:
-                found_valid_operation = True
-                var_response_matrix = np.zeros((n_atoms, n_atoms))
-                for i in range(n_atoms):
-                    for j in range(n_atoms):
-                        var_response_matrix[i,j] = np.var(response_matrix[:,i,j])
-                matrix_set[np.where(operationList == 'var')[0][0]] = var_response_matrix
+        if 'mea' in operationList:
+            matrix_dict['mea'] = np.mean(response_matrix,axis=0) 
 
-            if 'max' in operationList:
-                found_valid_operation = True
-                max_response_matrix = np.zeros((n_atoms, n_atoms))
-                for i in range(n_atoms):
-                    for j in range(n_atoms):
-                        max_response_matrix[i,j] = np.max(response_matrix[:,i,j])
-                matrix_set[np.where(operationList == 'max')[0][0]] = max_response_matrix
+        if 'min' in operationList:
+            matrix_dict['min'] = np.amin(response_matrix,axis=0)
 
-            if 'mea' in operationList:
-                found_valid_operation = True
-                mean_response_matrix = np.zeros((n_atoms, n_atoms))
-                for i in range(n_atoms):
-                    for j in range(n_atoms):
-                        mean_response_matrix[i,j] = np.mean(response_matrix[:,i,j]) 
-                matrix_set[np.where(operationList == 'mea')[0][0]] = mean_response_matrix
-
-            if 'min' in operationList:
-                found_valid_operation = True
-                min_response_matrix = np.zeros((n_atoms, n_atoms))
-                for i in range(n_atoms):
-                    for j in range(n_atoms):
-                        min_response_matrix[i,j] = np.min(response_matrix[:,i,j])
-                matrix_set[np.where(operationList == 'min')[0][0]] = min_response_matrix
-
-            if 'dif' in operationList:
-                found_valid_operation = True
-                dif_response_matrix = np.zeros((n_atoms, n_atoms))
-                for i in range(n_atoms):
-                    for j in range(n_atoms):
-                        dif_response_matrix[i,j] = response_matrix[np.where( \
-                        np.max(abs(response_matrix[:,i,j] - \
-                        ((cov[i*3:i*3+3, j*3:j*3+3])**2).sum()))),i,j]
-                matrix_set[np.where(operationList == 'dif')[0][0]] = dif_response_matrix
-
+        if 'dif' in operationList:
+            matrix_dict['dif'] = np.max(abs(response_matrix - n_by_n_cov_squared) \
+                                       , axis=0)
 
             LOGGER.report('Perturbation response matrix operations completed in %.1fs.',
-                          '_prody_prs')
-
-            if not found_valid_operation:
-                raise ValueError('Operation should be mean, variance, max, min or ' \
-                                 'or difference (from covariance matrix) in quotes ' \
-                                 'or a list containing a set of these or None.')
+                          '_prody_prs_ops')
 
         if operation is None:
             LOGGER.info('Operation is None so all {0} repeats are output.' \
@@ -608,11 +621,11 @@ def calcPerturbResponse(model, atoms=None, repeats=100, **kwargs):
             return response_matrix
 
     if atoms is not None: 
-        atoms.setData('prs_profile', matrix_set[0])
-        if len(operationList) > 1:
+        atoms.setData('prs_profile', matrix_dict[matrix_dict.keys()[0]])
+        if len(matrix_dict.keys()) > 1:
             LOGGER.info('Only one matrix can be added as data to atoms so' \
                         ' the first one was chosen. The operation that generated' \
-                        ' it was {0} (1st 3 letters).'.format(operationList[0]))
+                        ' it was {0} (1st 3 letters).'.format(matrix_dict.keys()[0]))
 
     saveOrig = kwargs.get('saveOrig',False)
     saveMatrix = kwargs.get('saveMatrix',False)
@@ -622,19 +635,19 @@ def calcPerturbResponse(model, atoms=None, repeats=100, **kwargs):
 
     if saveOrig == True or saveMatrix == True and normMatrix == False:
        # save the original PRS matrix for each operation
-       for i in range(len(operationList)):
-           np.savetxt('orig_{0}_{1}.txt'.format(baseSaveName,operationList[i]), \
-                      matrix_set[i], delimiter='\t', fmt='%8.6f')
+       for m in matrix_dict.keys():
+           np.savetxt('orig_{0}_{1}.txt'.format(baseSaveName,m), \
+                      matrix_dict[m], delimiter='\t', fmt='%8.6f')
     
     if normMatrix == True:
-        norm_PRS_mat = np.zeros((len(operationList),n_atoms,n_atoms))
+        norm_PRS_mat = {}
         # calculate the normalized PRS matrix for each operation
-        for m in range(len(operationList)):
-            self_dp = np.diag(matrix_set[m])  # using self displacement (diagonal of
+        for m in matrix_dict.keys():
+            self_dp = np.diag(matrix_dict[m])  # using self displacement (diagonal of
                                               # the original matrix) as a
                                               # normalization factor
             self_dp = self_dp.reshape(n_atoms, 1)
-            norm_PRS_mat[m] = matrix_set[m] / np.repeat(self_dp, n_atoms, axis=1)
+            norm_PRS_mat[m] = matrix_dict[m] / np.repeat(self_dp, n_atoms, axis=1)
 
             if suppressDiag == True:
                 # suppress the diagonal (self displacement) to facilitate
@@ -642,17 +655,37 @@ def calcPerturbResponse(model, atoms=None, repeats=100, **kwargs):
                 norm_PRS_mat[m] = norm_PRS_mat[m] - np.diag(np.diag(norm_PRS_mat[m]))
 
             if saveMatrix == True:
-                np.savetxt('norm_{0}_{1}.txt'.format(baseSaveName,operationList[m]), \
+                np.savetxt('norm_{0}_{1}.txt'.format(baseSaveName,m), \
                            norm_PRS_mat[m], delimiter='\t', fmt='%8.6f')
-           
-    if normMatrix == True:
-        if np.shape(norm_PRS_mat)[0] == 1:
-            norm_PRS_mat = norm_PRS_mat.reshape(n_atoms,n_atoms)
-        return norm_PRS_mat
+
+    LOGGER.report('Perturbation response scanning completed in %.1fs.',
+                  '_prody_prs_all')
+
+    matrix_list = []
+    for m in matrix_dict.keys():
+        if normMatrix == True:
+            matrix_list.append(norm_PRS_mat[m])
+        else:
+            matrix_list.append(matrix_dict[m])
+    matrix_array = array(matrix_list)
+
+    returnFormat = kwargs.get('returnFormat','array')
+    returnFormat = returnFormat.lower()
+
+    if len(matrix_array) == 1:
+        return matrix_array.reshape(n_atoms,n_atoms)
+    
+    if returnFormat is 'both':
+        LOGGER.info('You have requested return in both formats.' \
+                    ' Array comes first.')
+        return matrix_array, matrix_dict
+    elif 'dict' in returnFormat:
+        LOGGER.info('Output has been returned as a dictionary of matrices.')
+        return matrix_dict
     else:
-        if np.shape(matrix_set)[0] == 1:
-            matrix_set = matrix_set.reshape(n_atoms,n_atoms)
-        return matrix_set
+        LOGGER.info('Output has been returned as an array of matrices,' \
+                    ' which you can split into individual matrices.')
+        return matrix_array
 
 def parsePerturbResponseMatrix(prs_matrix_file='prs_matrix.txt',normMatrix=True):
     """Parses a perturbation response matrix from a file into a numpy ndarray.
@@ -713,9 +746,12 @@ def calcPerturbResponseProfiles(prs_matrix):
 def writePerturbResponsePDB(prs_matrix,pdbIn,**kwargs):
     """ Write the average response to perturbation of
     a particular residue (a row of a perturbation response matrix)
-    into the b-factor field of a PDB file for visualisation in PyMOL.
+    or the average effect of perturbation of a particular residue
+    (a column of a normalized perturbation response matrix)
+    into the b-factor field of a PDB file for visualisation in a
+    molecular graphics program.
     If no chain is given this will be done for that residue in all chains.
-    
+
     If no residue number is given then the effectiveness and sensitivity
     profiles will be written out instead. These two profiles are also returned
     as arrays for further analysis if they aren't already provided.
@@ -744,12 +780,19 @@ def writePerturbResponsePDB(prs_matrix,pdbIn,**kwargs):
     :arg resnum: residue number for the residue of interest
     :type resnum: int
 
-    :arg direction: whether you want to write out to PDB
-        a row (the effect on each residue of peturbing the specified residue)
-        or a column (the response of the specified residue to perturbing each 
-        residue). Default is row.
+    :arg direction: the direction you want to use to read data out
+        of the PRS matrix for plotting: the options are 'effect' or 'response'.
+        Default is 'effect'.
+        A row gives the effect on each residue of peturbing the specified 
+        residue.
+        A column gives the response of the specified residue to perturbing 
+        each residue.
         If no residue number is provided then this option will be ignored
     :type direction: str
+
+    :arg returnData: whether to return effectiveness and sensitivity for analysis
+        default is False
+    :type returnProfiles: bool
     """
 
     if not type(prs_matrix) is np.ndarray:
@@ -777,9 +820,9 @@ def writePerturbResponsePDB(prs_matrix,pdbIn,**kwargs):
     resnum = kwargs.get('resnum', None)
     pdbOut = kwargs.get('pdbOut', None)
     if pdbOut is None:
-        stem = pdbIn.split('.')[0]
+        out_stem = pdbIn.split('.')[0]
     elif type(pdbOut) is str:
-        stem = pdbOut.split('.')[0]
+        out_stem = pdbOut.split('.')[0]
         pdbOut = None
 
     if resnum is None:
@@ -788,39 +831,45 @@ def writePerturbResponsePDB(prs_matrix,pdbIn,**kwargs):
         if effectiveness is None or sensitivity is None:
             effectiveness, sensitivity = calcPerturbResponseProfiles(prs_matrix)
 
-        file_effs_name = '{0}_effectiveness.pdb'.format(stem)
-        file_sens_name = '{0}_sensitivity.pdb'.format(stem)
+        file_effs_name = '{0}_effectiveness.pdb'.format(out_stem)
+        file_sens_name = '{0}_sensitivity.pdb'.format(out_stem)
         fileEffs = open(file_effs_name,'w')
         fileSens = open(file_sens_name,'w')
 
         for line in lines:            
-            if line.find('ATOM') != 0:  
+            if line.find('ATOM') != 0 and line.find('HETATM') != 0 and line.find('ANISOU') != 0:
                 fileEffs.write(line)                    
                 fileSens.write(line)
-            else:
+            elif line.find('ATOM') == 0:
                 sel_line_res = structure.select('resid {0}'.format(line[22:26]))
                 j = np.where(structure.getResnums() == int(line[22:26]))[0] \
                     [np.where(sel_line_res.getChids() == line[21])[0][0]]
-                fileEffs.write(line[:60] + ' '*(6-len('{:3.2f}'.format((effectiveness[j])*100))) \
-                               + '{:3.2f}'.format((effectiveness[j])*100) + line[66:])
-                fileSens.write(line[:60] + ' '*(6-len('{:3.2f}'.format((sensitivity[j])*10))) \
-                               + '{:3.2f}'.format((sensitivity[j])*10) + line[66:])
+                fileEffs.write(line[:60] + ' '*(6-len('{:3.2f}'.format(( \
+                               effectiveness[j]*100/np.max(effectiveness))))) \
+                               + '{:3.2f}'.format((effectiveness[j]) \
+                               *100/np.max(effectiveness)) + line[66:])
+                fileSens.write(line[:60] + ' '*(6-len('{:3.2f}'.format((\
+                               sensitivity[j]*100/np.max(sensitivity))))) \
+                               + '{:3.2f}'.format((sensitivity[j]) \
+                               *100/np.max(sensitivity)) + line[66:])
+            elif line.find('HETATM') == 0:
+                fileEffs.write(line[:60] + ' '*2 + '0.00' + line[66:])
+                fileSens.write(line[:60] + ' '*2 + '0.00' + line[66:])
                       
         fileEffs.close()
         fileSens.close()
         LOGGER.info('The effectiveness and sensitivity profiles were written' \
                     ' to {0} and {1}.'.format(file_effs_name,file_sens_name))
 
-        if kwargs.get('effectiveness') is None:
+        returnData = kwargs.get('returnData',False)
+        if returnData:
             return effectiveness, sensitivity
         else:
             return
-
-    outFiles = []
-    timesNotFound = 0
-    direction = kwargs.get('direction','row')
+ 
+    timesNF = 0
+    direction = kwargs.get('direction','effect')
     for n in range(len(chain)):
-
         if not chain[n] in chains:
             raise PRSMatrixParseError('Chain {0} was not found in {1}'.format(chain[n], pdbIn))
 
@@ -830,37 +879,45 @@ def writePerturbResponsePDB(prs_matrix,pdbIn,**kwargs):
             LOGGER.info('A residue with number {0} was not found',
                         ' in chain {1}. Continuing to next chain.' \
                         .format(resnum, chain[n]))
-            timesNotFound += 1
+            timesNF += 1
             continue
 
     if pdbOut is None:
         pdbOut = []
         for n in range(len(chain)):
-            i = np.where(structure.getResnums() == resnum)[0][chainNum-timesNotFound]
-            pdbOut.append('{0}_{1}_{2}{3}_{4}.pdb'.format(stem, chain[n], \
-                              structure.getResnames()[i[n]], resnum, direction))
+            chainNum = int(np.where(chains == chain[n])[0])
+            i = np.where(structure.getResnums() == resnum)[0][chainNum-timesNF]
+            pdbOut.append('{0}_{1}_{2}{3}_{4}.pdb'.format(out_stem, chain[n], \
+                           structure.getResnames()[i], resnum, direction))
 
     for n in range(len(chain)):
+        chainNum = int(np.where(chains == chain)[0])
+        i = np.where(structure.getResnums() == resnum)[0][chainNum-timesNF]
         fo = open(pdbOut[n],'w')
         for line in lines:
-            if line.find('ATOM') != 0:
+            if line.find('ATOM') != 0 and line.find('HETATM') != 0 and line.find('ANISOU') != 0:
                 fo.write(line)
-            else:
+            elif line.find('ATOM') == 0:
                 sel_line_res = structure.select('resid {0}'.format(line[22:26]))
                 j = np.where(structure.getResnums() == int(line[22:26]))[0] \
                     [np.where(sel_line_res.getChids() == line[21])[0][0]]
 
-                if direction is 'row':
-                    fo.write(line[:60] + ' '*(6-len('{:3.2f}'.format((prs_matrix[i[n]][j])*10))) \
-                         + '{:3.2f}'.format((prs_matrix[i[n]][j])*10) + line[66:])
+                if direction is 'effect':
+                    fo.write(line[:60] + ' '*(6-len('{:3.2f}'.format(( \
+                             prs_matrix[i][j])*100/np.max(prs_matrix)))) \
+                             + '{:3.2f}'.format((prs_matrix[i][j]) \
+                             *100/np.max(prs_matrix)) + line[66:])
                 else:
-                    fo.write(line[:60] + ' '*(6-len('{:3.2f}'.format((prs_matrix[j][i[n]])*10))) \
-                         + '{:3.2f}'.format((prs_matrix[j][i[n]])*10) + line[66:])
+                    fo.write(line[:60] + ' '*(6-len('{:3.2f}'.format(( \
+                             prs_matrix[j][i])*100/np.max(prs_matrix)))) \
+                             + '{:3.2f}'.format((prs_matrix[j][i]) \
+                             *100/np.max(prs_matrix)) + line[66:])
+            elif line.find('HETATM') == 0:
+                fo.write(line[:60] + ' '*2 + '0.00' + line[66:])
 
-        fo.close()
-        outFiles.append(fo)
-        LOGGER.report('Perturbation responses for specific residues were written', 
-                       ' to {0} and {1}.'.format(', '.join(outFiles[:-1]),outFiles[-1]))
+        LOGGER.info('Perturbation responses for specific residues were written' \
+                    ' to {0}.'.format(', '.join(pdbOut)))
+
     return
 
 

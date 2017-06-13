@@ -7,7 +7,7 @@ import numpy as np
 from prody.proteins import fetchPDB, parsePDB, writePDB, mapOntoChain
 from prody.utilities import openFile, showFigure
 from prody import LOGGER, SETTINGS
-from prody.atomic import AtomMap, Chain, AtomGroup, Selection
+from prody.atomic import AtomMap, Chain, AtomGroup, Selection, Segment
 
 from .ensemble import *
 from .pdbensemble import *
@@ -385,7 +385,7 @@ def buildPDBEnsemble(refpdb, PDBs, title='Unknown', labels=None, seqid=94, cover
     :arg refpdb: Reference structure
     :type refpdb: :class:`.Chain`, :class:`.Selection`, or :class:`.AtomGroup`
     :arg PDBs: A list of PDB structures
-    :type PDBs: list
+    :type PDBs: iterable
     :arg title: The title of the ensemble
     :type title: str
     :arg labels: labels of the conformations
@@ -402,11 +402,8 @@ def buildPDBEnsemble(refpdb, PDBs, title='Unknown', labels=None, seqid=94, cover
     :type unmapped: list
     """
 
-    if not isinstance(refpdb, (Chain, Selection, AtomGroup)):
-        raise TypeError('Refpdb must be a Chain, Selection, or AtomGroup.')
-    
-    if not isinstance(PDBs, list):
-        raise TypeError('PDBs must be a list of Chain, Selection, or AtomGroup.')
+    if not isinstance(refpdb, (Chain, Segment, Selection, AtomGroup)):
+        raise TypeError('Refpdb must be a Chain, Segment, Selection, or AtomGroup.')
     
     if labels is not None:
         if len(labels) != len(PDBs):

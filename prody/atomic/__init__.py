@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""This module defines classes for handling atomic data.  Read this page using
+"""This module defines classes for handling atomic data. Read this page using
 ``help(atomic)``.
 
 .. _atomic:
@@ -171,6 +171,7 @@ from . import functions
 from . import atomgroup
 from . import selection
 from . import chain
+from . import segment
 
 from .chain import AAMAP, getSequence
 
@@ -201,6 +202,8 @@ select.HierView = HierView
 selection.HierView = HierView
 
 chain.HierView = HierView
+
+segment.HierView = HierView
 
 import numpy as np
 
