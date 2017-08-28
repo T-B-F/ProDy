@@ -395,7 +395,7 @@ def calcPerturbResponse(model, atoms=None, repeats=100, **kwargs):
 
     The PRS matrix can be calculated and saved as follows::
 
-      prs_matrix = calcPerturbationResponse(p38_anm, saveMatrix=True)
+      prs_matrix = calcPerturbResponse(p38_anm, saveMatrix=True)
       
     The PRS matrix can also be save later as follows::
     
@@ -482,12 +482,12 @@ def calcPerturbResponse(model, atoms=None, repeats=100, **kwargs):
                                  'or difference (from covariance matrix) in quotes ' \
                                  'or a list containing a set of these or None.')
 
-    if not isinstance(model, NMA):
-        raise TypeError('model must be an NMA instance')
+    if not isinstance(model, (NMA, ModeSet, Mode)):
+        raise TypeError('model must be an NMA, ModeSet, or Mode instance')
     elif not model.is3d() and not noForce:
         raise TypeError('model must be a 3-dimensional NMA instance' \
                         'for using PRS with force')
-    elif len(model) == 0:
+    if isinstance(model, NMA) and len(model) == 0:
         raise ValueError('model must have normal modes calculated')
 
     if atoms is not None:
@@ -741,7 +741,7 @@ def calcPerturbResponseProfiles(prs_matrix):
         effectiveness.append(np.mean(prs_matrix[i]))
         sensitivity.append(np.mean(prs_matrix.T[i]))
 
-    return effectiveness, sensitivity
+    return np.array(effectiveness), np.array(sensitivity)
 
 def writePerturbResponsePDB(prs_matrix,pdbIn,**kwargs):
     """ Write the average response to perturbation of
