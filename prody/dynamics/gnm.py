@@ -361,9 +361,9 @@ class GNM(GNMBase):
         """
             
         model = self.getModel()
-        LOGGER.info('Number of chains: {0}, chains: {1}.'
-                     .format(len(list(set(coords.getChids()))), \
-                                 list(set(coords.getChids()))))
+        #LOGGER.info('Number of chains: {0}, chains: {1}.'
+                     #.format(len(list(set(coords.getChids()))), \
+                                 #list(set(coords.getChids()))))
 
         try:
             #coords = coords.select('protein and name CA')
