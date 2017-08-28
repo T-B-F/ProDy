@@ -985,7 +985,7 @@ def showPerturbResponse(**kwargs):
             raise ValueError('Please provide a PRS matrix or model.')
         else:
             if kwargs.get('normMatrix') is None:
-                kwargs.set('normMatrix',True)
+                kwargs['normMatrix'] = True
             prs_matrix = calcPerturbResponse(**kwargs)
 
     effectiveness = kwargs.get('effectiveness')
@@ -1102,7 +1102,7 @@ def showPerturbResponseProfiles(prs_matrix,atoms,**kwargs):
                 raise ValueError('Please provide a PRS matrix or model.')
             else:
                 if kwargs.get('normMatrix') is None:
-                    kwargs.set('normMatrix',True)
+                    kwargs['normMatrix'] = True
                 prs_matrix = calcPerturbResponse(**kwargs)
         else:
             raise TypeError('Please provide a valid PRS matrix (as array).')
